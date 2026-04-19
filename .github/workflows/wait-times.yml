@@ -1,0 +1,74 @@
+name: Update wait times
+
+on:
+  # During the trip (May 16-22 EDT) fetch every ~5 min across park hours.
+  # EDT = UTC-4, so park hours 7am-midnight EDT = 11:00 UTC to 04:00 UTC next day.
+  schedule:
+    - cron: '*/5 11-23 16-22 5 *'  # 7am - 7:59pm EDT, May 16-22
+    - cron: '*/5 0-4  17-23 5 *'   # 8pm EDT prev day - 0:59am EDT = UTC 0-4 on May 17-23
+  workflow_dispatch: {}            # manual trigger for pre-trip testing
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wait-times
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch + merge queue-times JSON
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/qt
+          for id in 5 6 7 8; do
+            curl --retry 3 --retry-delay 5 -sSfL \
+              -H "User-Agent: didni-worl/1.0 (github.com/${{ github.repository }})" \
+              "https://queue-times.com/parks/${id}/queue_times.json" \
+              -o "/tmp/qt/${id}.json"
+          done
+          python3 - <<'PY'
+          import json, datetime
+          out = {
+              "updated": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "rides": {},
+          }
+          for pid in (5, 6, 7, 8):
+              with open(f"/tmp/qt/{pid}.json") as f:
+                  data = json.load(f)
+              for land in data.get("lands", []):
+                  for r in land.get("rides", []):
+                      out["rides"][str(r["id"])] = {
+                          "wait": int(r.get("wait_time") or 0),
+                          "open": bool(r.get("is_open")),
+                          "updated": r.get("last_updated"),
+                          "name": r.get("name"),
+                          "park": pid,
+                      }
+          with open("wait-times.json", "w") as f:
+              json.dump(out, f, indent=2, sort_keys=True)
+              f.write("\n")
+          PY
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "didni-worl-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Ignore the timestamp-only changes by diffing just the `rides` block.
+          if git diff --quiet wait-times.json; then
+            echo "No file change"
+            exit 0
+          fi
+          # If the only change is `updated`, skip to avoid a commit storm.
+          if git diff wait-times.json | grep -E '^[+-][^+-]' | grep -v '"updated"' | grep -q .; then
+            git add wait-times.json
+            git commit -m "chore(waits): refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          else
+            echo "Only timestamp changed; skipping commit"
+            git checkout -- wait-times.json
+          fi
