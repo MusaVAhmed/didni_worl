@@ -1,12 +1,15 @@
 name: Update wait times
 
 on:
-  # During the trip (May 16-22 EDT) fetch every ~5 min across park hours.
+  # Pre-trip: keep wait-times.json fresh with 3 daily snapshots during park hours
+  # so the site doesn't show stale "all closed" data while we're planning.
+  # Trip week (May 16-22 EDT): fetch every ~5 min across park hours.
   # EDT = UTC-4, so park hours 7am-midnight EDT = 11:00 UTC to 04:00 UTC next day.
   schedule:
-    - cron: '*/5 11-23 16-22 5 *'  # 7am - 7:59pm EDT, May 16-22
-    - cron: '*/5 0-4  17-23 5 *'   # 8pm EDT prev day - 0:59am EDT = UTC 0-4 on May 17-23
-  workflow_dispatch: {}            # manual trigger for pre-trip testing
+    - cron: '0 14,18,22 * * *'     # daily 10am/2pm/6pm EDT — pre-trip freshness
+    - cron: '*/5 11-23 16-22 5 *'  # trip week: 7am-7:59pm EDT, May 16-22
+    - cron: '*/5 0-4  17-23 5 *'   # trip week: 8pm-12:59am EDT next day, May 17-23
+  workflow_dispatch: {}            # manual trigger any time
 
 permissions:
   contents: write
